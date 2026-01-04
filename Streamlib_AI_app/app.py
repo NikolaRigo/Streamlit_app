@@ -44,6 +44,16 @@ def process_image(image):
 st.title("🛣️ RoadGuard Damage Detector")
 st.write(f"Running on: **{DEVICE.upper()}** (RTX 3050 detected)" if DEVICE == "cuda" else "Running on: **CPU**")
 
+st.write("### 🔍 Diagnostic: What files are here?")
+files_in_folder = os.listdir(BASE_DIR)
+st.write(f"Looking for: `{MODEL_PATH}`")
+st.write("Files found:", files_in_folder)
+
+if "best_road_model.pth" in files_in_folder:
+    st.success("File exists in list!")
+else:
+    st.error("File is NOT in the list. It was not pushed to GitHub correctly.")
+
 model = load_model()
 
 if model is None:
