@@ -7,7 +7,9 @@ import os
 
 # --- 1. CONFIGURATION ---
 CLASS_NAMES = ["Longitudinal Crack", "Transverse Crack", "Alligator Crack", "Pothole"]
-MODEL_PATH = "best_road_model.pth"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "best_road_model.pth")
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 st.set_page_config(page_title="RoadGuard AI", page_icon="🛣️")
