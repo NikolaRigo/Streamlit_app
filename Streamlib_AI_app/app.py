@@ -7,6 +7,7 @@ import os
 
 # --- 1. CONFIGURATION ---
 CLASS_NAMES = ["Longitudinal Crack", "Transverse Crack", "Alligator Crack", "Pothole"]
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "best_road_model.pth")
 
@@ -42,12 +43,6 @@ def process_image(image):
 # --- 4. THE USER INTERFACE ---
 st.title("🛣️ RoadGuard Damage Detector")
 st.write(f"Running on: **{DEVICE.upper()}** (RTX 3050 detected)" if DEVICE == "cuda" else "Running on: **CPU**")
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-st.write("BASE_DIR:", BASE_DIR)
-st.write("Files in BASE_DIR:", os.listdir(BASE_DIR))
-
 
 model = load_model()
 
