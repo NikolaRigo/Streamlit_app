@@ -43,6 +43,12 @@ def process_image(image):
 st.title("🛣️ RoadGuard Damage Detector")
 st.write(f"Running on: **{DEVICE.upper()}** (RTX 3050 detected)" if DEVICE == "cuda" else "Running on: **CPU**")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+st.write("BASE_DIR:", BASE_DIR)
+st.write("Files in BASE_DIR:", os.listdir(BASE_DIR))
+
+
 model = load_model()
 
 if model is None:
