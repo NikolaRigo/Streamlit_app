@@ -4,9 +4,12 @@ from torch import nn
 from torchvision import models, transforms
 from PIL import Image
 import os
+import pandas as pd
 
 # --- 1. CONFIGURATION ---
 CLASS_NAMES = ["Longitudinal Crack", "Transverse Crack", "Alligator Crack", "Pothole"]
+
+SEVERITY_ORDER = ["Pothole", "Alligator Crack", "Transverse Crack", "Longitudinal Crack"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "best_road_model.pth")
@@ -39,6 +42,37 @@ def process_image(image):
     ])
     return transform(image).unsqueeze(0).to(DEVICE)
 
+def predict_single_image(model, img):
+    input_tensor = process_image(img)
+    with torch.no_grad():
+        output = model(input_tensor)
+        probabilities = torch.nn.functional.softmax(output[0], dim=0)
+
+    all_probs = probabilities.tolist()
+    
+    # 0: Longitudinal, 1: Transverse, 2: Alligator, 3: Pothole
+    p_pothole = probabilities[3].item()
+    p_alligator = probabilities[2].item()
+    
+    # Standard Prediction
+    max_conf, max_pred_idx = torch.max(probabilities, 0)
+    final_pred_idx = max_pred_idx.item()
+    severity_override = False
+
+    # --- SAFETY LOGIC: POTHOLE OVERRIDE ---
+    if p_pothole >= 0.20:
+        final_pred_idx = 3  # Force Pothole
+        severity_override = True
+        final_conf = p_pothole # Use the pothole probability as the confidence displayed
+    elif p_alligator >= 0.30:
+        final_pred_idx = 2  # Force Alligator Crack
+        severity_override = True
+        final_conf = p_alligator
+    else:
+        final_conf = max_conf.item()
+
+    return CLASS_NAMES[final_pred_idx], final_conf, severity_override, all_probs
+
 
 # --- 4. THE USER INTERFACE ---
 st.title("🛣️ RoadGuard Damage Detector")
@@ -49,42 +83,75 @@ model = load_model()
 if model is None:
     st.error(f"⚠️ Could not find '{MODEL_PATH}'. Make sure your training finished and the file is in this folder!")
 else:
-    uploaded_file = st.file_uploader("Upload a photo of a road surface...", type=["jpg", "jpeg", "png"])
+    uploaded_files = st.file_uploader("Upload a photo of a road surface...", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-    if uploaded_file:
-        # Display the image
-        img = Image.open(uploaded_file).convert("RGB")
-        st.image(img, caption="Uploaded Image", use_container_width=True)
-
+    if uploaded_files:
+        st.info(f"Uploaded {len(uploaded_files)} image(s). Ready to initiate classification.")
+        
         if st.button("🔍 Analyze Road Surface"):
-            with st.spinner("Analyzing pixels..."):
-                # Run prediction
-                input_tensor = process_image(img)
-                with torch.no_grad():
-                    output = model(input_tensor)
-                    probabilities = torch.nn.functional.softmax(output[0], dim=0)
-                    conf, pred = torch.max(probabilities, 0)
+            grouped_results = {k: [] for k in CLASS_NAMES}
 
-                # Show results
-                label = CLASS_NAMES[pred.item()]
-                confidence_score = conf.item() * 100
+            progress_bar = st.progress(0)
 
-                st.divider()
-                st.subheader(f"Result: {label}")
+            for i, file in enumerate(uploaded_files):
+                img = Image.open(file).convert("RGB")
+                
+                label, conf, override, all_probs = predict_single_image(model, img)
 
-                # Visual feedback based on damage type
-                if label == "Pothole":
-                    st.error(f"Critical: {label} detected. Repair recommended.")
-                else:
-                    st.warning(f"Maintenance: {label} detected.")
+                grouped_results[label].append({
+                    "image": img,
+                    "filename": file.name,
+                    "confidence": conf,
+                    "override": override,
+                    "all_probs": all_probs
+                })
 
-                st.write(f"**Confidence:** {confidence_score:.2f}%")
-                st.progress(conf.item())
+                progress_bar.progress((i + 1) / len(uploaded_files))
+            
+            st.success("Analysis complete! See results below.")
+            st.divider()
 
-                # Show all class probabilities for transparency
-                with st.expander("See Detailed Probability Breakdown"):
-                    for i, prob in enumerate(probabilities):
-                        st.write(f"{CLASS_NAMES[i]}: {prob.item() * 100:.1f}%")
+            for category in SEVERITY_ORDER:
+                items = grouped_results[category]
+
+                if items:
+                    if category == "Pothole":
+                        st.markdown("## 🚨 Potholes Detected")
+                        st.markdown("These require immediate attention due to safety risks.")
+                    elif category == "Alligator Crack":
+                        st.markdown("## ⚠️ Alligator Cracks Detected")
+                        st.markdown("These indicate severe road damage needing prompt repair.")
+                    else:
+                        st.markdown(f"## ℹ️ {category}s Detected")
+                        st.markdown("These are less severe but should be monitored.")
+
+                    
+                    cols = st.columns(3)
+                    for idx, item in enumerate(items):
+                        with cols[idx % 3]:
+                            st.image(item["image"], use_container_width=True)
+                            
+                            if item["override"]:
+                                st.caption(f"**⚠️{item['filename']}**")
+                                st.error(f"⚠️ Risk: {item['confidence']*100:.1f}% (Override Active)")
+                            else:
+                                st.caption(f"{item['filename']}")
+                                st.write(f"Confidence: {item['confidence']*100:.1f}%")
+
+                            table_data = {
+                                "Defect Type": CLASS_NAMES,
+                                "Confidence (%)": [f"{p*100:.1f}%" for p in item["all_probs"]]
+                            }
+                            df = pd.DataFrame(table_data)
+
+                            st.dataframe(
+                                df,
+                                hide_index=True,
+                                use_container_width=True,
+                                height=150
+                            )
+
+                    st.divider()
 
 # --- SIDEBAR INFO ---
 st.sidebar.info(
