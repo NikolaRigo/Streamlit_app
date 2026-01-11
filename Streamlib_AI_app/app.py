@@ -379,7 +379,7 @@ else:
 # --- SIDEBAR INFO ---
 st.sidebar.info(
     "### About This Model\n"
-    "This AI was trained to 74% accuracy using MobileNetV2. "
+    "This AI was trained to ~83% accuracy using MobileNetV2. "
     "It specializes in identifying Cracks and Potholes.\n\n"
     "### Features\n"
     "✅ Card-based layout\n"
