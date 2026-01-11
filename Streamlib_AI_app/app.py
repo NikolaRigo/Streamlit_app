@@ -20,18 +20,40 @@ CLASS_NAMES = ["Longitudinal Crack", "Transverse Crack", "Alligator Crack", "Pot
 SEVERITY_ORDER = ["Pothole", "Alligator Crack", "Transverse Crack", "Longitudinal Crack"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "best_road_model.pth")
+MODEL_PATH = os.path.join(BASE_DIR, "best_model_Stage2.pth")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-st.set_page_config(page_title="RoadGuard AI", page_icon="🛣️")
+st.set_page_config(page_title="RoadGuard AI", page_icon="🛣️", layout="wide")
+
+# Custom CSS for better image display
+st.markdown("""
+<style>
+    /* Force images to display at full width */
+    .stImage img {
+        width: 100% !important;
+        height: auto !important;
+        object-fit: contain;
+    }
+    
+    /* Improve card spacing */
+    [data-testid="stContainer"] {
+        padding: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 # --- 2. MODEL LOADING ---
 @st.cache_resource  # Keep the model in memory so it doesn't reload every click
 def load_model():
     model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.last_channel, 4)
+    model.classifier = nn.Sequential(
+        nn.Linear(model.last_channel, 256),
+        nn.ReLU(inplace=True),
+        nn.Dropout(0.3),
+        nn.Linear(256, 4)  # NUM_CLASSES
+    )
 
     if os.path.exists(MODEL_PATH):
         model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
@@ -81,7 +103,9 @@ def predict_single_image(model, img):
 
     return CLASS_NAMES[final_pred_idx], final_conf, severity_override, all_probs
 
-# --- 4. PDF REPORT GENERATION ---
+
+# --- 4. EXPORT FUNCTIONS ---
+
 def generate_pdf_report(grouped_results, analysis_time):
     """Generate a comprehensive PDF report"""
     buffer = io.BytesIO()
@@ -263,10 +287,12 @@ else:
             
             st.success("Analysis complete! See results below.")
             
-            # --- PDF REPORT DOWNLOAD ---
+            # --- EXPORT BUTTONS ---
             st.divider()
-            col1, col2, col3 = st.columns([1, 1, 1])
+            col1, col2 = st.columns([1, 2])
+            
             with col1:
+                # PDF Export
                 pdf_buffer = generate_pdf_report(grouped_results, analysis_time)
                 st.download_button(
                     label="📄 Download PDF Report",
@@ -275,15 +301,16 @@ else:
                     mime="application/pdf",
                     use_container_width=True
                 )
-
-            with col3:
+            
+            with col2:
                 total_images = sum(len(v) for v in grouped_results.values())
                 critical_count = len(grouped_results["Pothole"]) + len(grouped_results["Alligator Crack"])
                 st.metric("Total Analyzed", total_images)
                 st.metric("Critical Issues", critical_count, delta="High Priority" if critical_count > 0 else None)
-
+            
             st.divider()
 
+            # --- DISPLAY RESULTS WITH CARD-BASED LAYOUT ---
             for category in SEVERITY_ORDER:
                 items = grouped_results[category]
 
@@ -305,8 +332,11 @@ else:
                         with cols[idx % 3]:
                             # Card container
                             with st.container(border=True):
-                                # Image
-                                st.image(item["image"], use_container_width=True)
+                                # Image with fixed height
+                                st.image(item["image"], use_container_width=True, output_format="JPEG")
+                                
+                                # Add some spacing
+                                st.markdown("")
                                 
                                 # Title (filename)
                                 st.markdown(f"**{item['filename']}**")
@@ -348,4 +378,18 @@ else:
 
 # --- SIDEBAR INFO ---
 st.sidebar.info(
-    "### About This Model\nThis AI was trained to 74% accuracy using MobileNetV2. It specializes in identifying Cracks and Potholes.")
+    "### About This Model\n"
+    "This AI was trained to 74% accuracy using MobileNetV2. "
+    "It specializes in identifying Cracks and Potholes.\n\n"
+    "### Features\n"
+    "✅ Card-based layout\n"
+    "✅ Severity badges with color coding\n"
+    "✅ Confidence metrics\n"
+    "✅ Expandable probability details\n\n"
+    "### Export Options\n"
+    "After analysis, you can download:\n"
+    "- **PDF Report**: Professional summary with statistics"
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Version:** 2.1 (Card Layout)")
