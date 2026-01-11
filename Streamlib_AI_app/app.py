@@ -5,6 +5,14 @@ from torchvision import models, transforms
 from PIL import Image
 import os
 import pandas as pd
+from datetime import datetime
+import io
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # --- 1. CONFIGURATION ---
 CLASS_NAMES = ["Longitudinal Crack", "Transverse Crack", "Alligator Crack", "Pothole"]
@@ -38,7 +46,7 @@ def load_model():
 def process_image(image):
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.ToTensor(),
+        transforms.ToTensor()
     ])
     return transform(image).unsqueeze(0).to(DEVICE)
 
@@ -73,8 +81,148 @@ def predict_single_image(model, img):
 
     return CLASS_NAMES[final_pred_idx], final_conf, severity_override, all_probs
 
+# --- 4. PDF REPORT GENERATION ---
+def generate_pdf_report(grouped_results, analysis_time):
+    """Generate a comprehensive PDF report"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    
+    # Define styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1f77b4'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor('#2c3e50'),
+        spaceAfter=12,
+        spaceBefore=12
+    )
+    
+    # Title
+    elements.append(Paragraph("🛣️ RoadGuard AI Analysis Report", title_style))
+    elements.append(Spacer(1, 12))
+    
+    # Metadata
+    meta_data = [
+        ['Analysis Date:', analysis_time],
+        ['Total Images Analyzed:', str(sum(len(v) for v in grouped_results.values()))],
+        ['Device Used:', DEVICE.upper()],
+        ['Model:', 'MobileNetV2 (74% accuracy)']
+    ]
+    
+    meta_table = Table(meta_data, colWidths=[2*inch, 4*inch])
+    meta_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#ecf0f1')),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 1, colors.grey)
+    ]))
+    elements.append(meta_table)
+    elements.append(Spacer(1, 20))
+    
+    # Executive Summary
+    elements.append(Paragraph("Executive Summary", heading_style))
+    
+    summary_data = [['Defect Type', 'Count', 'Severity Level']]
+    severity_map = {
+        'Pothole': 'CRITICAL',
+        'Alligator Crack': 'HIGH',
+        'Transverse Crack': 'MEDIUM',
+        'Longitudinal Crack': 'LOW'
+    }
+    
+    for category in SEVERITY_ORDER:
+        count = len(grouped_results[category])
+        if count > 0:
+            summary_data.append([category, str(count), severity_map[category]])
+    
+    summary_table = Table(summary_data, colWidths=[2.5*inch, 1.5*inch, 2*inch])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTSIZE', (0, 1), (-1, -1), 10),
+        ('TOPPADDING', (0, 1), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 20))
+    
+    # Detailed Results
+    elements.append(Paragraph("Detailed Analysis Results", heading_style))
+    elements.append(Spacer(1, 12))
+    
+    for category in SEVERITY_ORDER:
+        items = grouped_results[category]
+        if items:
+            # Category header
+            category_style = ParagraphStyle(
+                'Category',
+                parent=styles['Heading3'],
+                fontSize=14,
+                textColor=colors.HexColor('#e74c3c') if category == 'Pothole' else colors.HexColor('#34495e'),
+                spaceAfter=8
+            )
+            elements.append(Paragraph(f"{category} ({len(items)} detected)", category_style))
+            
+            # Create table for this category
+            table_data = [['Filename', 'Confidence', 'Override', 'Long.', 'Trans.', 'Allig.', 'Pothole']]
+            
+            for item in items:
+                table_data.append([
+                    item['filename'][:25] + '...' if len(item['filename']) > 25 else item['filename'],
+                    f"{item['confidence']*100:.1f}%",
+                    '⚠️' if item['override'] else '✓',
+                    f"{item['all_probs'][0]*100:.0f}%",
+                    f"{item['all_probs'][1]*100:.0f}%",
+                    f"{item['all_probs'][2]*100:.0f}%",
+                    f"{item['all_probs'][3]*100:.0f}%"
+                ])
+            
+            detail_table = Table(table_data, colWidths=[2*inch, 0.8*inch, 0.6*inch, 0.6*inch, 0.6*inch, 0.6*inch, 0.7*inch])
+            detail_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey])
+            ]))
+            elements.append(detail_table)
+            elements.append(Spacer(1, 15))
+    
+    # Build PDF
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
-# --- 4. THE USER INTERFACE ---
+
+# --- 5. THE USER INTERFACE ---
 st.title("🛣️ RoadGuard Damage Detector")
 st.write(f"Running on: **{DEVICE.upper()}** (RTX 3050 detected)" if DEVICE == "cuda" else "Running on: **CPU**")
 
@@ -90,6 +238,7 @@ else:
         
         if st.button("🔍 Analyze Road Surface"):
             grouped_results = {k: [] for k in CLASS_NAMES}
+            analysis_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             progress_bar = st.progress(0)
 
@@ -108,13 +257,38 @@ else:
 
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
+            # Store results in session state for export
+            st.session_state['grouped_results'] = grouped_results
+            st.session_state['analysis_time'] = analysis_time
+            
             st.success("Analysis complete! See results below.")
+            
+            # --- PDF REPORT DOWNLOAD ---
+            st.divider()
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                pdf_buffer = generate_pdf_report(grouped_results, analysis_time)
+                st.download_button(
+                    label="📄 Download PDF Report",
+                    data=pdf_buffer,
+                    file_name=f"roadguard_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+
+            with col3:
+                total_images = sum(len(v) for v in grouped_results.values())
+                critical_count = len(grouped_results["Pothole"]) + len(grouped_results["Alligator Crack"])
+                st.metric("Total Analyzed", total_images)
+                st.metric("Critical Issues", critical_count, delta="High Priority" if critical_count > 0 else None)
+
             st.divider()
 
             for category in SEVERITY_ORDER:
                 items = grouped_results[category]
 
                 if items:
+                    # Category header with emoji and description
                     if category == "Pothole":
                         st.markdown("## 🚨 Potholes Detected")
                         st.markdown("These require immediate attention due to safety risks.")
@@ -125,31 +299,50 @@ else:
                         st.markdown(f"## ℹ️ {category}s Detected")
                         st.markdown("These are less severe but should be monitored.")
 
-                    
+                    # Create cards in 3-column layout
                     cols = st.columns(3)
                     for idx, item in enumerate(items):
                         with cols[idx % 3]:
-                            st.image(item["image"], use_container_width=True)
-                            
-                            if item["override"]:
-                                st.caption(f"**⚠️{item['filename']}**")
-                                st.error(f"⚠️ Risk: {item['confidence']*100:.1f}% (Override Active)")
-                            else:
-                                st.caption(f"{item['filename']}")
-                                st.write(f"Confidence: {item['confidence']*100:.1f}%")
-
-                            table_data = {
-                                "Defect Type": CLASS_NAMES,
-                                "Confidence (%)": [f"{p*100:.1f}%" for p in item["all_probs"]]
-                            }
-                            df = pd.DataFrame(table_data)
-
-                            st.dataframe(
-                                df,
-                                hide_index=True,
-                                use_container_width=True,
-                                height=150
-                            )
+                            # Card container
+                            with st.container(border=True):
+                                # Image
+                                st.image(item["image"], use_container_width=True)
+                                
+                                # Title (filename)
+                                st.markdown(f"**{item['filename']}**")
+                                
+                                # Severity badge with emoji
+                                severity_badges = {
+                                    "Pothole": "🔴 POTHOLE",
+                                    "Alligator Crack": "🟠 ALLIGATOR CRACK",
+                                    "Transverse Crack": "🟡 TRANSVERSE CRACK",
+                                    "Longitudinal Crack": "🔵 LONGITUDINAL CRACK"
+                                }
+                                st.markdown(f"### {severity_badges[category]}")
+                                
+                                # Confidence metric
+                                st.metric(
+                                    label="Confidence",
+                                    value=f"{item['confidence']*100:.1f}%",
+                                    delta="High" if item['confidence'] > 0.7 else ("Medium" if item['confidence'] > 0.4 else "Low")
+                                )
+                                
+                                # Override warning
+                                if item["override"]:
+                                    st.warning("⚠️ Safety Override Applied", icon="⚠️")
+                                
+                                # Expandable detailed probabilities
+                                with st.expander("📊 Show Detailed Probabilities"):
+                                    st.markdown("**All Class Probabilities:**")
+                                    
+                                    # Create horizontal bars for each class
+                                    for class_idx, class_name in enumerate(CLASS_NAMES):
+                                        prob_value = item['all_probs'][class_idx]
+                                        st.progress(prob_value, text=f"{class_name}: {prob_value*100:.1f}%")
+                                    
+                                    # Additional metadata
+                                    st.divider()
+                                    st.caption(f"Analyzed: {analysis_time}")
 
                     st.divider()
 
